@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PassVault — パスワード管理</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
+<meta name="theme-color" content="#5b4fff">
 <style>
   :root {
     --bg: #f5f6fa;
@@ -362,38 +366,43 @@
     <div class="lock-sub" style="margin-top:6px">あなたのパスワードを安全に保管</div>
   </div>
   <div class="lock-box">
-    <!-- 生体認証ボタン (登録済み時のみ表示) -->
+    <!-- 生体認証セクション (登録済み時に優先表示) -->
     <div id="biometricSection" style="display:none; flex-direction:column; gap:10px">
       <button class="biometric-btn" id="biometricBtn" onclick="unlockBiometric()">
         <span style="font-size:22px">👤</span> 顔認証 / 指紋認証でロック解除
       </button>
-      <div class="lock-divider"><span>またはパスワードで</span></div>
+      <div id="biometricError" style="color:var(--danger);font-size:12px;text-align:center;min-height:16px"></div>
+      <div class="lock-divider"><span>または</span></div>
+      <div class="biometric-reg" onclick="showPasswordSection()">🔑 マスターパスワードを使う</div>
     </div>
 
-    <div>
-      <label>マスターパスワード</label>
-      <div class="pw-row" style="margin-top:7px">
-        <input type="password" id="masterPwInput" placeholder="パスワードを入力" autocomplete="current-password">
-        <button class="eye-btn" onclick="toggleMasterPw()">👁</button>
+    <!-- パスワードセクション -->
+    <div id="passwordSection" style="display:flex; flex-direction:column; gap:14px">
+      <div>
+        <label>マスターパスワード</label>
+        <div class="pw-row" style="margin-top:7px">
+          <input type="password" id="masterPwInput" placeholder="パスワードを入力" autocomplete="current-password">
+          <button class="eye-btn" onclick="toggleMasterPw()">👁</button>
+        </div>
       </div>
-    </div>
-    <div id="lockError"></div>
-    <button class="btn-primary" onclick="unlock()">ロック解除</button>
+      <div id="lockError"></div>
+      <button class="btn-primary" onclick="unlock()">ロック解除</button>
 
-    <!-- 生体認証登録リンク (未登録時のみ) -->
-    <div id="biometricRegSection">
-      <div class="biometric-reg" onclick="registerBiometric()">🔒 顔認証・指紋認証を登録する</div>
-    </div>
+      <!-- 生体認証登録リンク (未登録時のみ) -->
+      <div id="biometricRegSection">
+        <div class="biometric-reg" onclick="registerBiometric()">🔒 顔認証・指紋認証を登録する</div>
+      </div>
 
-    <div class="lock-opts">
-      <button class="btn-outline" onclick="toggleImport()">📥 SisPassインポート</button>
-      <button class="btn-outline" onclick="startFresh()">✨ 新規作成</button>
-    </div>
-    <div class="import-area" id="importArea">
-      <div style="font-size:12px;color:var(--muted);text-align:center">SisPassMgr の .db ファイルを選択</div>
-      <label for="dbFile">📂 ファイルを選択</label>
-      <input type="file" id="dbFile" accept=".db" onchange="loadFile(this)">
-      <div class="import-file-name" id="fileName">ファイル未選択</div>
+      <div class="lock-opts">
+        <button class="btn-outline" onclick="toggleImport()">📥 SisPassインポート</button>
+        <button class="btn-outline" onclick="startFresh()">✨ 新規作成</button>
+      </div>
+      <div class="import-area" id="importArea">
+        <div style="font-size:12px;color:var(--muted);text-align:center">SisPassMgr の .db ファイルを選択</div>
+        <label for="dbFile">📂 ファイルを選択</label>
+        <input type="file" id="dbFile" accept=".db" onchange="loadFile(this)">
+        <div class="import-file-name" id="fileName">ファイル未選択</div>
+      </div>
     </div>
   </div>
 </div>
@@ -654,20 +663,30 @@ function hasBiometricRegistered() {
 }
 
 function updateBiometricUI() {
-  const regSection = document.getElementById('biometricRegSection');
-  const section    = document.getElementById('biometricSection');
+  const regSection  = document.getElementById('biometricRegSection');
+  const bioSection  = document.getElementById('biometricSection');
+  const pwSection   = document.getElementById('passwordSection');
   if (!isWebAuthnAvailable()) {
     regSection.style.display = 'none';
-    section.style.display    = 'none';
+    bioSection.style.display = 'none';
+    pwSection.style.display  = 'flex';
     return;
   }
   if (hasBiometricRegistered()) {
-    section.style.display    = 'flex';
+    bioSection.style.display = 'flex';
+    pwSection.style.display  = 'none';
     regSection.style.display = 'none';
   } else {
-    section.style.display    = 'none';
+    bioSection.style.display = 'none';
+    pwSection.style.display  = 'flex';
     regSection.style.display = 'block';
   }
+}
+
+function showPasswordSection() {
+  document.getElementById('biometricSection').style.display = 'none';
+  document.getElementById('passwordSection').style.display  = 'flex';
+  setTimeout(() => document.getElementById('masterPwInput')?.focus(), 50);
 }
 
 // Base64url helpers
@@ -740,8 +759,13 @@ async function registerBiometric() {
   }
 }
 
-async function unlockBiometric() {
-  if (!isWebAuthnAvailable() || !hasBiometricRegistered()) return;
+async function unlockBiometric(auto = false) {
+  const errEl = document.getElementById('biometricError');
+  errEl.textContent = '';
+  if (!isWebAuthnAvailable() || !hasBiometricRegistered()) {
+    if (!auto) showPasswordSection();
+    return;
+  }
   try {
     const credId  = localStorage.getItem(CRED_KEY);
     const rpId    = location.hostname || 'localhost';
@@ -772,8 +796,16 @@ async function unlockBiometric() {
     showApp();
     showToast('生体認証でロック解除しました');
   } catch(e) {
-    if (e.name === 'NotAllowedError') showToast('認証がキャンセルされました');
-    else { console.error(e); showToast('生体認証に失敗しました'); }
+    if (e.name === 'NotAllowedError') {
+      errEl.textContent = auto ? '' : '認証がキャンセルされました';
+    } else {
+      console.error(e);
+      errEl.textContent = '生体認証に失敗しました';
+    }
+    if (auto) {
+      // 自動試行が失敗/キャンセルされた場合はパスワード入力に切り替え
+      showPasswordSection();
+    }
   }
 }
 
@@ -841,6 +873,9 @@ function lockApp() {
   document.getElementById('lockScreen').style.display = 'flex';
   document.getElementById('masterPwInput').value = '';
   updateBiometricUI();
+  if (hasBiometricRegistered() && isWebAuthnAvailable()) {
+    setTimeout(() => unlockBiometric(true), 300);
+  }
 }
 
 function showApp() {
@@ -1347,7 +1382,11 @@ document.addEventListener('keydown', e => {
 
 // Init
 updateBiometricUI();
-document.getElementById('masterPwInput').focus();
+if (hasBiometricRegistered() && isWebAuthnAvailable()) {
+  setTimeout(() => unlockBiometric(true), 300);
+} else {
+  document.getElementById('masterPwInput').focus();
+}
 </script>
 </body>
 </html>
