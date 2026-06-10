@@ -233,6 +233,8 @@
   .entry-sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .entry-actions { display: flex; gap: 4px; opacity: 0; transition: opacity .15s; }
   .entry-card:hover .entry-actions { opacity: 1; }
+  .tag-pill { display:inline-block; background: var(--accent-bg); color: var(--accent); border-radius: 6px; padding: 1px 7px; font-size: 10px; font-weight: 700; margin-right: 4px; }
+  .entry-tags { margin-top: 3px; }
 
   /* Modals */
   .overlay {
@@ -401,6 +403,8 @@
   <div class="topbar">
     <div class="topbar-logo">Pass<span>Vault</span></div>
     <button class="icon-btn" onclick="openGenModal()" title="パスワード生成">⚡</button>
+    <button class="icon-btn" onclick="triggerImport()" title="インポート">📥</button>
+    <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="handleImportFile(this)">
     <button class="icon-btn" onclick="exportData()" title="エクスポート">📤</button>
     <button class="icon-btn" onclick="lockApp()" title="ロック">🔒</button>
   </div>
@@ -414,6 +418,12 @@
       </button>
       <div id="categoryList"></div>
       <button class="sidebar-add" onclick="openCatModal()">＋ カテゴリを追加</button>
+      <div class="sidebar-section">その他</div>
+      <button class="cat-item" onclick="selectCategory('__trash__')" id="cat-trash">
+        <div class="cat-icon" style="background:var(--surface2)">🗑️</div>
+        ゴミ箱
+        <span class="cat-count" id="count-trash">0</span>
+      </button>
     </div>
     <div class="content">
       <div class="content-top">
@@ -421,7 +431,7 @@
           <span class="search-icon">🔍</span>
           <input type="text" placeholder="検索..." id="searchInput" oninput="renderEntries()">
         </div>
-        <button class="btn-add" onclick="openEntryModal()">＋ 追加</button>
+        <button class="btn-add" id="btnAdd" onclick="openEntryModal()">＋ 追加</button>
       </div>
       <div class="cat-header">
         <h2 id="catTitle">すべて</h2>
@@ -494,6 +504,10 @@
       <div class="form-group">
         <label class="form-label">メモ</label>
         <textarea class="form-input memo-input" id="e_memo" placeholder="メモ（任意）"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">タグ（カンマ区切り）</label>
+        <input type="text" class="form-input" id="e_tags" placeholder="例: 仕事, 重要, 共有アカウント">
       </div>
     </div>
     <div class="modal-footer">
@@ -576,7 +590,7 @@
 // ============================================================
 // STATE
 // ============================================================
-let db = { categories: [], entries: [] };
+let db = { categories: [], entries: [], trash: [] };
 let masterKey = null;
 let selectedCategory = '__all__';
 let editingId = null;
@@ -752,8 +766,9 @@ async function unlockBiometric() {
     masterKey = await deriveKey(pw);
     currentMasterPassword = pw;
     const saved = await loadFromStorage(masterKey);
-    db = saved || { categories: getDefaultCategories(), entries: [] };
+    db = saved || { categories: getDefaultCategories(), entries: [], trash: [] };
     if (!saved) await saveToStorage();
+    else ensureDataMigration();
     showApp();
     showToast('生体認証でロック解除しました');
   } catch(e) {
@@ -794,11 +809,12 @@ async function unlock() {
     const saved = await loadFromStorage(masterKey);
     if (saved) {
       db = saved;
+      ensureDataMigration();
     } else if (importedFileContent) {
       db = parseSisPassDB(importedFileContent, pw);
       await saveToStorage();
     } else {
-      db = { categories: getDefaultCategories(), entries: [] };
+      db = { categories: getDefaultCategories(), entries: [], trash: [] };
       await saveToStorage();
     }
     showApp();
@@ -812,7 +828,7 @@ async function startFresh() {
   if (!pw) { document.getElementById('lockError').textContent = 'パスワードを設定してください'; return; }
   masterKey = await deriveKey(pw);
   currentMasterPassword = pw;
-  db = { categories: getDefaultCategories(), entries: [] };
+  db = { categories: getDefaultCategories(), entries: [], trash: [] };
   await saveToStorage();
   showApp();
 }
@@ -858,13 +874,14 @@ function parseSisPassDB(content, password) {
           category: categories[0].id, url: '',
           username: '[復号が必要]', password: '[復号が必要]',
           memo: 'SisPassMgrから構造インポート（暗号化仕様未解析のため内容は要手入力）',
+          tags: [],
           createdAt: Date.now(), updatedAt: Date.now()
         });
       }
     }
     showToast(`${count} 件を検出しました`);
   } catch(e) { console.error(e); }
-  return { categories, entries };
+  return { categories, entries, trash: [] };
 }
 
 // ============================================================
@@ -877,12 +894,23 @@ function getDefaultCategories() {
     { id:'c3', name:'金融',        emoji:'💳' },
     { id:'c4', name:'ゲーム',      emoji:'🎮' },
     { id:'c5', name:'メール',      emoji:'📧' },
+    { id:'c7', name:'ネット',      emoji:'🌐' },
     { id:'c6', name:'その他',      emoji:'📁' },
   ];
 }
 
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+function ensureDataMigration() {
+  if (!db.trash) db.trash = [];
+  if (!db.categories.find(c => c.name === 'ネット')) {
+    db.categories.push({ id:'c7', name:'ネット', emoji:'🌐' });
+  }
+  for (const e of db.entries) {
+    if (!e.tags) e.tags = [];
+  }
 }
 
 // ============================================================
@@ -893,6 +921,8 @@ function renderAll() { renderSidebar(); renderEntries(); }
 function renderSidebar() {
   document.getElementById('count-all').textContent = db.entries.length;
   document.getElementById('cat-all').className = 'cat-item' + (selectedCategory==='__all__' ? ' active' : '');
+  document.getElementById('count-trash').textContent = db.trash.length;
+  document.getElementById('cat-trash').className = 'cat-item' + (selectedCategory==='__trash__' ? ' active' : '');
   const list = document.getElementById('categoryList');
   list.innerHTML = '';
   for (const cat of db.categories) {
@@ -909,7 +939,40 @@ function renderSidebar() {
 function renderEntries() {
   const grid   = document.getElementById('entriesGrid');
   const search = document.getElementById('searchInput').value.toLowerCase();
+
+  if (selectedCategory === '__trash__') {
+    document.getElementById('btnAdd').style.display = 'none';
+    document.getElementById('catTitle').textContent = '🗑️ ゴミ箱';
+    let items = db.trash;
+    if (search) items = items.filter(e => e.title.toLowerCase().includes(search));
+    document.getElementById('catCount').textContent = `${items.length}件`;
+    if (!items.length) {
+      grid.innerHTML = `<div class="empty-state"><div class="empty-icon">🗑️</div><h3>ゴミ箱は空です</h3><div style="font-size:13px;margin-top:4px">削除したエントリはここに表示されます</div></div>`;
+      return;
+    }
+    grid.innerHTML = '';
+    for (const entry of items) {
+      const card = document.createElement('div');
+      card.className = 'entry-card';
+      card.style.cursor = 'default';
+      const sub = entry.username || entry.url || '—';
+      card.innerHTML = `
+        <div class="entry-icon">${entry.emoji||'🔑'}</div>
+        <div class="entry-info">
+          <div class="entry-title">${escHtml(entry.title)}</div>
+          <div class="entry-sub">${escHtml(sub)}</div>
+        </div>
+        <div class="entry-actions" style="opacity:1">
+          <button class="icon-btn" onclick="restoreEntry('${entry.id}')" title="復元">♻️</button>
+          <button class="icon-btn" onclick="permanentDelete('${entry.id}')" title="完全に削除">🗑️</button>
+        </div>`;
+      grid.appendChild(card);
+    }
+    return;
+  }
+
   let entries  = db.entries;
+  document.getElementById('btnAdd').style.display = '';
   if (selectedCategory !== '__all__') {
     entries = entries.filter(e => e.category === selectedCategory);
     const cat = db.categories.find(c => c.id === selectedCategory);
@@ -921,7 +984,8 @@ function renderEntries() {
     entries = entries.filter(e =>
       e.title.toLowerCase().includes(search) ||
       (e.username||'').toLowerCase().includes(search) ||
-      (e.url||'').toLowerCase().includes(search)
+      (e.url||'').toLowerCase().includes(search) ||
+      (e.tags||[]).some(t => t.toLowerCase().includes(search))
     );
   }
   document.getElementById('catCount').textContent = `${entries.length}件`;
@@ -935,11 +999,15 @@ function renderEntries() {
     card.className = 'entry-card';
     card.onclick = () => showDetail(entry.id);
     const sub = entry.username || entry.url || '—';
+    const tagsHtml = (entry.tags && entry.tags.length)
+      ? `<div class="entry-tags">${entry.tags.map(t=>`<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>`
+      : '';
     card.innerHTML = `
       <div class="entry-icon">${entry.emoji||'🔑'}</div>
       <div class="entry-info">
         <div class="entry-title">${escHtml(entry.title)}</div>
         <div class="entry-sub">${escHtml(sub)}</div>
+        ${tagsHtml}
       </div>
       <div class="entry-actions">
         <button class="icon-btn" onclick="event.stopPropagation();copyPassword('${entry.id}')" title="コピー">📋</button>
@@ -975,6 +1043,7 @@ function showDetail(id) {
     { label:'パスワード',   value: entry.password, copy:true, masked:true },
   ];
   if (entry.memo) fields.push({ label:'メモ', value: entry.memo });
+  if (entry.tags && entry.tags.length) fields.push({ label:'タグ', value: entry.tags.join(', '), pills: entry.tags });
   for (const f of fields) {
     if (!f.value) continue;
     const div = document.createElement('div');
@@ -983,7 +1052,9 @@ function showDetail(id) {
       ? `<div class="detail-field-value masked" id="dv_${f.label}">••••••••</div>`
       : f.link
         ? `<div class="detail-field-value"><a href="${escHtml(f.value)}" target="_blank" style="color:var(--accent)">${escHtml(f.value)}</a></div>`
-        : `<div class="detail-field-value">${escHtml(f.value)}</div>`;
+        : f.pills
+          ? `<div class="detail-field-value" style="white-space:normal">${f.pills.map(t=>`<span class="tag-pill">${escHtml(t)}</span>`).join('')}</div>`
+          : `<div class="detail-field-value">${escHtml(f.value)}</div>`;
     const safeVal = f.value.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     const eyeBtn  = f.masked ? `<span style="cursor:pointer;margin-right:4px" onclick="event.stopPropagation();toggleDetailPw('${f.label}','${safeVal}')">👁</span>` : '';
     const copyBtn = f.copy ? `<button class="copy-btn" onclick="copyField('${safeVal}',this)">${eyeBtn}コピー</button>` : '';
@@ -1002,17 +1073,40 @@ function toggleDetailPw(label, value) {
 function editCurrentEntry() { closeModal('detailOverlay'); openEntryModal(viewingId); }
 
 async function deleteCurrentEntry() {
-  if (!confirm('このエントリを削除しますか？')) return;
-  db.entries = db.entries.filter(e => e.id !== viewingId);
+  if (!confirm('このエントリをゴミ箱に移動しますか？')) return;
+  const idx = db.entries.findIndex(e => e.id === viewingId);
+  if (idx >= 0) {
+    const [removed] = db.entries.splice(idx, 1);
+    removed.deletedAt = Date.now();
+    db.trash.push(removed);
+  }
   await saveToStorage();
   closeModal('detailOverlay');
   renderAll();
-  showToast('削除しました');
+  showToast('ゴミ箱に移動しました');
 }
 
+async function restoreEntry(id) {
+  const idx = db.trash.findIndex(e => e.id === id);
+  if (idx < 0) return;
+  const [item] = db.trash.splice(idx, 1);
+  delete item.deletedAt;
+  if (!db.categories.find(c => c.id === item.category)) item.category = db.categories[0]?.id;
+  db.entries.push(item);
+  await saveToStorage();
+  renderAll();
+  showToast('復元しました');
+}
+
+async function permanentDelete(id) {
+  if (!confirm('完全に削除しますか？この操作は取り消せません。')) return;
+  db.trash = db.trash.filter(e => e.id !== id);
+  await saveToStorage();
+  renderAll();
+  showToast('完全に削除しました');
+}
 async function copyPassword(id) {
   const entry = db.entries.find(e => e.id === id);
-  if (!entry?.password) return;
   await navigator.clipboard.writeText(entry.password);
   showToast('パスワードをコピーしました');
 }
@@ -1038,6 +1132,7 @@ function openEntryModal(id = null) {
   document.getElementById('e_username').value = e?.username || '';
   document.getElementById('e_password').value = e?.password || '';
   document.getElementById('e_memo').value     = e?.memo     || '';
+  document.getElementById('e_tags').value     = (e?.tags || []).join(', ');
   if (e) setTimeout(() => { document.getElementById('e_category').value = e.category || ''; }, 10);
   updateStrengthBar();
   openModal('editOverlay');
@@ -1054,6 +1149,7 @@ async function saveEntry() {
     username: document.getElementById('e_username').value.trim(),
     password: document.getElementById('e_password').value,
     memo:     document.getElementById('e_memo').value.trim(),
+    tags:     document.getElementById('e_tags').value.split(',').map(t=>t.trim()).filter(Boolean),
     updatedAt: Date.now(),
     createdAt: editingId ? (db.entries.find(e=>e.id===editingId)?.createdAt || Date.now()) : Date.now()
   };
@@ -1151,6 +1247,65 @@ function generatePassword() {
 async function copyGenResult() {
   await navigator.clipboard.writeText(document.getElementById('genResult').value);
   showToast('コピーしました');
+}
+
+// ============================================================
+// IMPORT (PassVault JSON)
+// ============================================================
+function triggerImport() {
+  document.getElementById('importFileInput').click();
+}
+
+async function handleImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.entries || !Array.isArray(data.entries)) {
+      showToast('対応していないファイル形式です');
+      return;
+    }
+    const mode = confirm('「OK」で既存データに追加（マージ）、「キャンセル」で全て置き換えます。\nよろしいですか？');
+    if (mode) {
+      // マージ: カテゴリは名前で重複排除、エントリは新規IDで追加
+      const nameToId = {};
+      for (const c of db.categories) nameToId[c.name] = c.id;
+      for (const c of (data.categories || [])) {
+        if (!nameToId[c.name]) {
+          const newId = genId();
+          nameToId[c.name] = newId;
+          db.categories.push({ id: newId, name: c.name, emoji: c.emoji || '📁' });
+        }
+      }
+      for (const e of data.entries) {
+        const oldCat = (data.categories || []).find(c => c.id === e.category);
+        const newCatId = oldCat ? nameToId[oldCat.name] : (db.categories[0]?.id);
+        db.entries.push({ ...e, id: genId(), category: newCatId, tags: e.tags || [] });
+      }
+      if (data.trash) {
+        for (const e of data.trash) {
+          db.trash.push({ ...e, id: genId(), tags: e.tags || [] });
+        }
+      }
+    } else {
+      // 置き換え
+      db = {
+        categories: (data.categories && data.categories.length) ? data.categories : getDefaultCategories(),
+        entries: (data.entries || []).map(e => ({ ...e, tags: e.tags || [] })),
+        trash: (data.trash || []).map(e => ({ ...e, tags: e.tags || [] }))
+      };
+    }
+    ensureDataMigration();
+    await saveToStorage();
+    renderAll();
+    showToast('インポートしました');
+  } catch(e) {
+    console.error(e);
+    showToast('インポートに失敗しました: ファイルを確認してください');
+  } finally {
+    input.value = '';
+  }
 }
 
 // ============================================================
