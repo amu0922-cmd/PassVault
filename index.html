@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PassVault — パスワード管理</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
-<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png?v=2">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png?v=2">
 <meta name="theme-color" content="#5b4fff">
 <style>
   :root {
@@ -360,6 +360,7 @@
 
 <!-- LOCK SCREEN -->
 <div id="lockScreen">
+  <button class="icon-btn" onclick="hardReload()" title="更新" style="position:fixed; top:14px; right:14px; background:var(--surface); border:1px solid var(--border); box-shadow:var(--shadow); border-radius:50%; width:38px; height:38px; display:flex; align-items:center; justify-content:center;">🔄</button>
   <div class="lock-logo">🔐</div>
   <div style="text-align:center">
     <div class="lock-title">PassVault</div>
@@ -414,6 +415,7 @@
     <button class="icon-btn" onclick="openGenModal()" title="パスワード生成">⚡</button>
     <button class="icon-btn" onclick="triggerImport()" title="インポート">📥</button>
     <input type="file" id="importFileInput" accept=".json" style="display:none" onchange="handleImportFile(this)">
+    <button class="icon-btn" onclick="hardReload()" title="更新">🔄</button>
     <button class="icon-btn" onclick="exportData()" title="エクスポート">📤</button>
     <button class="icon-btn" onclick="lockApp()" title="ロック">🔒</button>
   </div>
@@ -1353,6 +1355,26 @@ function exportData() {
   a.href = url; a.download = `passvault_${new Date().toISOString().slice(0,10)}.json`;
   a.click(); URL.revokeObjectURL(url);
   showToast('エクスポートしました（非暗号化）');
+}
+
+// ============================================================
+// UPDATE / RELOAD
+// ============================================================
+async function hardReload() {
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch(e) { console.error(e); }
+  // キャッシュバスター付きで強制再読み込み
+  const url = new URL(location.href);
+  url.searchParams.set('_r', Date.now());
+  location.href = url.toString();
 }
 
 // ============================================================
